@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Base Testnet QR Payments</title>
+<style>
+  :root {
+    --bg:#eef1f6; --panel:#ffffff; --ink:#0f1a2e; --muted:#5d6b82; --line:#d9dfea;
+    --blue:#0052ff; --ok:#12805c; --warn:#b76e00; --bad:#c62f2f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0b1220; --panel:#131c2e; --ink:#e8eef9; --muted:#8fa0bb; --line:#26334b;
+            --blue:#5b8dff; --ok:#3ccf9b; --warn:#f0b04a; --bad:#ff7b7b; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Avenir Next","Trebuchet MS","Segoe UI",system-ui,sans-serif;
+    padding:max(16px,env(safe-area-inset-top)) 14px max(32px,env(safe-area-inset-bottom)); }
+  .wrap { max-width:760px; margin:0 auto; display:grid; gap:12px; }
+  h1 { margin:0; font-size:1.7rem; letter-spacing:-.03em; }
+  .tag { display:inline-block; font-size:.75rem; padding:3px 9px; border-radius:20px; background:color-mix(in srgb,var(--blue) 15%,transparent); color:var(--blue); font-weight:700; margin-left:8px; vertical-align:middle; }
+  header p { margin:6px 0 0; color:var(--muted); font-size:.92rem; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:1.05rem; }
+  label { display:block; font-size:.82rem; color:var(--muted); margin:10px 0 4px; }
+  input, textarea, select { width:100%; font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:11px 12px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:520px){ .two { grid-template-columns:1fr; } }
+  button { font:inherit; font-weight:700; border:0; border-radius:12px; padding:12px 16px; cursor:pointer; background:var(--line); color:var(--ink); }
+  button.primary { background:var(--blue); color:#fff; }
+  button.big { width:100%; padding:16px; font-size:1.05rem; }
+  button.small { padding:6px 10px; font-size:.8rem; border-radius:8px; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--blue); outline-offset:2px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px; }
+  .hint { font-size:.8rem; color:var(--muted); margin-top:6px; }
+  .msg { padding:10px 12px; border-radius:10px; font-size:.9rem; margin-top:10px; display:none; background:color-mix(in srgb,var(--bad) 13%,var(--panel)); border:1px solid var(--bad); word-break:break-word; }
+  .msg.show { display:block; }
+  .msg.good { background:color-mix(in srgb,var(--ok) 13%,var(--panel)); border-color:var(--ok); }
+  #invoice { display:none; text-align:center; }
+  #invoice.show { display:block; }
+  #qr { display:inline-block; padding:14px; background:#fff; border-radius:14px; margin:6px 0; }
+  #qr img, #qr canvas { display:block; }
+  .uri { word-break:break-all; font-size:.72rem; color:var(--muted); margin-top:6px; max-height:4.5em; overflow:hidden; }
+  .status { display:inline-flex; align-items:center; gap:8px; font-weight:700; margin-top:10px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--warn); }
+  .dot.live { animation:pulse 1.3s infinite; }
+  @keyframes pulse { 50% { opacity:.25; } }
+  @media (prefers-reduced-motion: reduce){ .dot.live { animation:none; } }
+  .tx { border-top:1px solid var(--line); padding:12px 0; display:grid; gap:4px; font-size:.9rem; }
+  .tx:first-child { border-top:0; }
+  .tx .top { display:flex; justify-content:space-between; gap:10px; font-weight:700; }
+  .tx .meta { color:var(--muted); font-size:.8rem; word-break:break-all; }
+  .tx a, .msg a { color:var(--blue); }
+  .badge { font-size:.75rem; padding:2px 8px; border-radius:20px; background:color-mix(in srgb,var(--ok) 16%,transparent); color:var(--ok); font-weight:700; }
+  .decoded { background:var(--bg); border-radius:10px; padding:10px 12px; margin-top:10px; font-size:.92rem; word-break:break-word; display:none; }
+  .decoded.show { display:block; }
+  .empty { color:var(--muted); font-size:.9rem; }
+  .warn { color:var(--warn); }
+  .payer .amt { font-size:2.4rem; font-weight:800; letter-spacing:-.03em; margin:6px 0; }
+  .payer .kv { font-size:.9rem; color:var(--muted); word-break:break-all; margin:4px 0; }
+  .payer .kv b { color:var(--ink); }
+  #merchantView { display:contents; }
+  #payView { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ PAYER VIEW (opens when the QR is scanned) ============ -->
+  <div id="payView">
+    <section class="card payer" aria-live="polite">
+      <h1>Pay with test tokens <span class="tag">Base Sepolia</span></h1>
+      <div class="amt" id="pAmt"></div>
+      <div class="kv">To <b id="pTo"></b></div>
+      <div class="kv" id="pMsgRow">Message attached: <b id="pMsg"></b></div>
+      <div class="row"><button class="primary big" id="payBtn">Send payment and message</button></div>
+      <div class="msg" id="pErr" role="alert"></div>
+      <div class="msg good" id="pOk" role="status"></div>
+      <div class="hint">Your wallet will ask you to confirm. Payment and message go in one Base Sepolia transaction. Use a wallet browser (MetaMask, Coinbase Wallet, Rainbow) if your phone browser has no wallet.</div>
+    </section>
+  </div>
+
+  <!-- ============ MERCHANT VIEW ============ -->
+  <div id="merchantView">
+    <header>
+      <h1>QR Payments <span class="tag">Base Sepolia testnet</span></h1>
+      <p>Create a QR. When it is scanned, the payer sends test tokens and your message in one transaction. Each payment is recorded here with the decrypted message.</p>
+    </header>
+
+    <section class="card">
+      <h2>1. Create the payment QR</h2>
+      <label for="merchant">Address that receives payments</label>
+      <input id="merchant" placeholder="Your Base Sepolia address, 0x..." autocomplete="off" spellcheck="false">
+
+      <div class="two">
+        <div>
+          <label for="amount">Amount</label>
+          <input id="amount" inputmode="decimal" placeholder="0.0000001" value="0.0000001">
+          <div class="hint">Minimum 0.0000001</div>
+        </div>
+        <div>
+          <label for="tokenSel">Token</label>
+          <select id="tokenSel">
+            <option value="eth">Base Sepolia ETH (native)</option>
+            <option value="erc20">Custom test token (ERC-20)</option>
+          </select>
+        </div>
+      </div>
+      <div id="tokenBox" style="display:none">
+        <label for="tokenAddr">Test token contract address</label>
+        <input id="tokenAddr" placeholder="0x..." autocomplete="off" spellcheck="false">
+      </div>
+
+      <label for="message">Message sent with the payment</label>
+      <input id="message" maxlength="140" value="Invoice #1001" placeholder="For example an order or invoice number">
+
+      <label for="pass">Encryption passphrase (optional)</label>
+      <input id="pass" type="password" placeholder="Leave empty to send the message as plain text" autocomplete="off">
+      <div class="hint">If set, the message is encrypted before it goes on-chain, so only you can read it. This page decrypts it when the payment arrives. Keep this page open and the passphrase filled in.</div>
+
+      <label for="pageUrl">Link of this page (what the QR opens)</label>
+      <input id="pageUrl" placeholder="https://your-site.com/base-qr-payment-gateway-v2.html" autocomplete="off" spellcheck="false">
+      <div class="hint" id="urlHint">Host this file at an https link so the payer's phone can open it.</div>
+
+      <label for="qrType">QR type</label>
+      <select id="qrType">
+        <option value="link">Payment link: token + message (recommended)</option>
+        <option value="wallet">Wallet QR: token only, no message</option>
+      </select>
+
+      <label for="rpcUrl">Network RPC (optional)</label>
+      <input id="rpcUrl" placeholder="Leave empty to use public Base Sepolia servers" autocomplete="off" spellcheck="false">
+
+      <div class="row"><button class="primary" id="generate">Create QR code</button></div>
+      <div class="msg" id="msg" role="alert"></div>
+    </section>
+
+    <section class="card" id="invoice" aria-live="polite">
+      <h2 id="invTitle">2. Ask the payer to scan</h2>
+      <div id="qr"></div>
+      <div class="uri" id="uri"></div>
+      <div class="msg good" id="confirm" role="status" style="text-align:left;font-size:1.02rem"></div>
+      <div class="status"><span class="dot live" id="dot"></span><span id="watch">Waiting for payment</span></div>
+      <div class="row" style="justify-content:center">
+        <button id="copyUri" class="small">Copy link</button>
+        <button id="stop" class="small">Stop watching</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. Recorded payments</h2>
+      <div id="list"><div class="empty">No payments recorded yet.</div></div>
+      <div class="row">
+        <button id="csv" class="small">Export CSV</button>
+        <button id="clear" class="small">Clear records</button>
+      </div>
+      <div class="hint">Records are saved in this browser only. Keep this page open to detect new payments.</div>
+    </section>
+
+    <section class="card">
+      <h2>4. Read the message in any transaction</h2>
+      <label for="hash">Transaction hash</label>
+      <input id="hash" placeholder="0x..." autocomplete="off" spellcheck="false">
+      <label for="dpass">Passphrase (if the message was encrypted)</label>
+      <input id="dpass" type="password" autocomplete="off">
+      <div class="row"><button id="decode" class="primary">Decrypt message</button></div>
+      <div class="decoded" id="decoded"></div>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const CHAIN = { id: 84532, hex: '0x14a34', rpc: 'https://sepolia.base.org', explorer: 'https://sepolia.basescan.org' };
+  const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const KEY = 'basepay_records_v2';
+  const addrRe = /^0x[a-fA-F0-9]{40}$/;
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const short = a => a.slice(0, 6) + '…' + a.slice(-4);
+  const toHex = bytes => [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+  const fromHex = h => new Uint8Array((h.replace(/^0x/, '').match(/.{1,2}/g) || []).map(b => parseInt(b, 16)));
+  const b64 = bytes => btoa(String.fromCharCode(...bytes));
+  const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const b64url = str => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64url = s => decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))));
+
+  function fromUnits(v, dec) {
+    const s = v.toString().padStart(dec + 1, '0');
+    const w = s.slice(0, s.length - dec), f = s.slice(s.length - dec).replace(/0+$/, '');
+    return f ? w + '.' + f : w;
+  }
+  function toUnits(str, d) {
+    const s = String(str).trim();
+    if (!/^\d*\.?\d+$|^\d+\.$/.test(s)) throw new Error('Enter a valid amount.');
+    let [w, f = ''] = s.split('.');
+    f = (f + '0'.repeat(d)).slice(0, d);
+    return BigInt((w || '0') + f);
+  }
+
+  // ---------- encryption ----------
+  async function deriveKey(pass, salt) {
+    const km = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, km,
+      { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+  async function encryptText(text, pass) {
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await deriveKey(pass, salt), enc.encode(text)));
+    const all = new Uint8Array(28 + ct.length); all.set(salt, 0); all.set(iv, 16); all.set(ct, 28);
+    return 'ENC1:' + b64(all);
+  }
+  async function decryptText(payload, pass) {
+    const all = unb64(payload.slice(5));
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: all.slice(16, 28) },
+      await deriveKey(pass, all.slice(0, 16)), all.slice(28));
+    return dec.decode(pt);
+  }
+
+  // Extract the message bytes from a transaction's input (works for native sends and ERC-20 transfers)
+  function messageHexFromInput(input) {
+    if (!input || input === '0x') return null;
+    const body = input.slice(2).toLowerCase();
+    if (body.startsWith('a9059cbb')) return body.length > 136 ? body.slice(136) : null; // transfer(address,uint256) + extra bytes
+    return body;
+  }
+  async function readMessage(input, pass) {
+    const hex = messageHexFromInput(input);
+    if (!hex) return null;
+    let text;
+    try { text = dec.decode(fromHex(hex)); } catch (_) { return null; }
+    if (!text.startsWith('ENC1:')) return /^[\x09\x0a\x0d\x20-\x7e\u00a0-\uffff]+$/.test(text) ? text : null;
+    if (!pass) return '(Encrypted message. Enter the passphrase to read it.)';
+    try { return await decryptText(text, pass); } catch (_) { return '(Could not decrypt: wrong passphrase.)'; }
+  }
+
+  async function ensureChain() {
+    try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN.hex }] }); }
+    catch (e) {
+      if (e.code === 4902 || /unrecognized|not added/i.test(e.message || '')) {
+        await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{
+          chainId: CHAIN.hex, chainName: 'Base Sepolia', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+          rpcUrls: [CHAIN.rpc], blockExplorerUrls: [CHAIN.explorer] }] });
+      } else throw e;
+    }
+  }
+
+  // =====================================================================
+  // PAYER VIEW
+  // =====================================================================
+  const hash = location.hash || '';
+  if (hash.startsWith('#pay=')) {
+    let p;
+    try { p = JSON.parse(unb64url(hash.slice(5))); } catch (_) { p = null; }
+    $('merchantView').style.display = 'none';
+    $('payView').style.display = 'block';
+    document.title = 'Pay with test tokens';
+    if (!p || !addrRe.test(p.to || '')) {
+      $('pAmt').textContent = 'Invalid payment link';
+      $('payBtn').disabled = true;
+    } else {
+      $('pAmt').textContent = `${fromUnits(BigInt(p.amt), p.dec)} ${p.sym}`;
+      $('pTo').textContent = p.to;
+      if (p.msg) $('pMsg').textContent = p.msg.startsWith('ENC1:') ? 'Encrypted message' : p.msg;
+      else $('pMsgRow').style.display = 'none';
+      $('payBtn').addEventListener('click', async () => {
+        const err = $('pErr'), ok = $('pOk'); err.classList.remove('show'); ok.classList.remove('show');
+        if (!window.ethereum) { err.textContent = 'No wallet found. Open this link inside a wallet browser such as MetaMask or Coinbase Wallet.'; err.classList.add('show'); return; }
+        $('payBtn').disabled = true;
+        try {
+          const [from] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+          await ensureChain();
+          const msgHex = p.msg ? toHex(enc.encode(p.msg)) : '';
+          const amtBig = BigInt(p.amt);
+          const txParams = p.tok
+            ? { from, to: p.tok, value: '0x0',
+                data: '0xa9059cbb' + p.to.slice(2).toLowerCase().padStart(64, '0') + amtBig.toString(16).padStart(64, '0') + msgHex }
+            : { from, to: p.to, value: '0x' + amtBig.toString(16), data: msgHex ? '0x' + msgHex : '0x' };
+          const tx = await window.ethereum.request({ method: 'eth_sendTransaction', params: [txParams] });
+          ok.innerHTML = `Payment sent. <a href="${CHAIN.explorer}/tx/${esc(tx)}" target="_blank" rel="noopener">View transaction</a>`;
+          ok.classList.add('show');
+        } catch (e) {
+          err.textContent = 'Payment not sent: ' + (e.message || 'cancelled');
+          err.classList.add('show');
+        }
+        $('payBtn').disabled = false;
+      });
+    }
+    return;
+  }
+
+  // =====================================================================
+  // MERCHANT VIEW
+  // =====================================================================
+  let invoice = null, timer = null, lastBlock = null, busy = false, records = [];
+  try { records = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (_) {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(records)); } catch (_) {} };
+
+  function msg(text, good) {
+    const m = $('msg'); m.textContent = text || ''; m.classList.toggle('show', !!text); m.classList.toggle('good', !!good);
+  }
+  const RPCS = ['https://sepolia.base.org', 'https://base-sepolia-rpc.publicnode.com', 'https://base-sepolia.drpc.org', 'https://base-sepolia.blockpi.network/v1/rpc/public'];
+  let goodRpc = null;
+  async function rpcAt(url, method, params) {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 9000);
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctl.signal,
+        body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }) });
+      const j = await r.json();
+      if (j.error) { const e = new Error(j.error.message); e.rpcError = true; throw e; }
+      return j.result;
+    } finally { clearTimeout(t); }
+  }
+  async function rpc(method, params = []) {
+    const custom = ($('rpcUrl') && $('rpcUrl').value.trim()) || '';
+    const list = [custom, goodRpc, ...RPCS].filter((u, i, a) => u && a.indexOf(u) === i);
+    let lastErr;
+    for (const url of list) {
+      try { const res = await rpcAt(url, method, params); goodRpc = url; return res; }
+      catch (e) { if (e.rpcError) throw e; lastErr = e; }
+    }
+    throw new Error('Cannot reach the Base Sepolia network (' + (lastErr && lastErr.message || 'failed to fetch') + '). Check your internet connection. If this page is open inside claude.ai, download the file and open it in your browser or host it on your own site.');
+  }
+
+  // default page link
+  if (/^https?:/.test(location.href)) $('pageUrl').value = location.href.split('#')[0];
+  else $('urlHint').innerHTML = '<span class="warn">This file is opened from your device, so a payer\'s phone cannot open it. Upload it to an https site and paste that link here.</span>';
+
+  $('tokenSel').addEventListener('change', e => { $('tokenBox').style.display = e.target.value === 'erc20' ? 'block' : 'none'; });
+
+  function decodeAbiString(hex) {
+    const b = hex.replace(/^0x/, '');
+    if (b.length === 64) return dec.decode(fromHex(b)).replace(/\0/g, '');
+    const len = parseInt(b.slice(64, 128), 16);
+    return dec.decode(fromHex(b.slice(128, 128 + len * 2)));
+  }
+  async function tokenInfo(addr) {
+    let decimals = 18, symbol = 'TOKEN';
+    try { decimals = parseInt(await rpc('eth_call', [{ to: addr, data: '0x313ce567' }, 'latest']), 16) || 18; } catch (_) {}
+    try { symbol = decodeAbiString(await rpc('eth_call', [{ to: addr, data: '0x95d89b41' }, 'latest'])) || 'TOKEN'; } catch (_) {}
+    return { decimals, symbol };
+  }
+
+  $('generate').addEventListener('click', async () => {
+    msg('');
+    const merchant = $('merchant').value.trim();
+    if (!addrRe.test(merchant)) { msg('Enter a valid receiving address that starts with 0x.'); return; }
+    const isToken = $('tokenSel').value === 'erc20';
+    const tokenAddr = $('tokenAddr').value.trim();
+    if (isToken && !addrRe.test(tokenAddr)) { msg('Enter a valid token contract address.'); return; }
+    const type = $('qrType').value;
+    let page = $('pageUrl').value.trim();
+    if (type === 'link' && !/^https?:\/\//.test(page)) { msg('Enter the https link where this page is hosted, or switch QR type to Wallet QR.'); return; }
+    $('generate').disabled = true;
+    try {
+      const info = isToken ? await tokenInfo(tokenAddr) : { decimals: 18, symbol: 'ETH' };
+      const units = toUnits($('amount').value, info.decimals);
+      const minUnits = info.decimals >= 7 ? 10n ** BigInt(info.decimals - 7) : 1n;
+      if (units < minUnits) throw new Error('The minimum amount is 0.0000001.');
+
+      let text = $('message').value.trim();
+      const pass = $('pass').value;
+      if (text && pass) text = await encryptText(text, pass);
+
+      let uri;
+      if (type === 'link') {
+        const payload = { v: 1, to: merchant, amt: units.toString(), dec: info.decimals, sym: info.symbol,
+          tok: isToken ? tokenAddr : null, msg: text };
+        uri = page.split('#')[0] + '#pay=' + b64url(JSON.stringify(payload));
+      } else {
+        uri = isToken
+          ? `ethereum:${tokenAddr}@${CHAIN.id}/transfer?address=${merchant}&uint256=${units}`
+          : `ethereum:${merchant}@${CHAIN.id}?value=${units}`;
+      }
+
+      try { lastBlock = parseInt(await rpc('eth_blockNumber'), 16); } catch (_) { lastBlock = null; }
+      invoice = { merchant: merchant.toLowerCase(), token: isToken ? tokenAddr.toLowerCase() : null,
+        units, decimals: info.decimals, symbol: info.symbol, uri };
+      $('confirm').classList.remove('show');
+      if (!drawQR(uri)) { msg('That message makes the QR too large. Shorten the message or turn off encryption.'); $('generate').disabled = false; return; }
+      $('invoice').classList.add('show');
+      $('invTitle').textContent = `2. Scan to pay ${fromUnits(units, info.decimals)} ${info.symbol}`;
+      $('uri').textContent = uri;
+      startWatching();
+      $('invoice').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) { msg(e.message); }
+    $('generate').disabled = false;
+  });
+
+  function drawQR(text) {
+    const box = $('qr'); box.innerHTML = '';
+    if (typeof QRCode === 'undefined') { box.textContent = 'QR library could not load. Use the link below.'; return true; }
+    try {
+      new QRCode(box, { text, width: 250, height: 250, correctLevel: text.length > 250 ? QRCode.CorrectLevel.L : QRCode.CorrectLevel.M });
+      return true;
+    } catch (_) { box.innerHTML = ''; return false; }
+  }
+  $('copyUri').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(invoice.uri); $('copyUri').textContent = 'Copied'; setTimeout(() => $('copyUri').textContent = 'Copy link', 1500); } catch (_) {}
+  });
+
+  // ---------- watcher ----------
+  function startWatching() {
+    clearInterval(timer);
+    $('dot').classList.add('live'); $('stop').textContent = 'Stop watching';
+    timer = setInterval(poll, 4000); poll();
+  }
+  $('stop').addEventListener('click', () => {
+    if (timer) { clearInterval(timer); timer = null; $('watch').textContent = 'Stopped'; $('dot').classList.remove('live'); $('stop').textContent = 'Resume watching'; }
+    else if (invoice) startWatching();
+  });
+
+  async function poll() {
+    if (busy || !invoice) return; busy = true;
+    try {
+      const latest = parseInt(await rpc('eth_blockNumber'), 16);
+      if (lastBlock === null) lastBlock = latest;
+      const from = lastBlock + 1, to = Math.min(latest, from + 24);
+      if (from <= to) {
+        if (invoice.token) {
+          const logs = await rpc('eth_getLogs', [{ fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16),
+            address: invoice.token, topics: [TRANSFER, null, '0x' + '0'.repeat(24) + invoice.merchant.slice(2)] }]);
+          for (const l of logs) {
+            const v = BigInt(l.data);
+            if (v >= invoice.units) {
+              let input = '0x';
+              try { const t = await rpc('eth_getTransactionByHash', [l.transactionHash]); input = t ? t.input : '0x'; } catch (_) {}
+              await onPayment(l.transactionHash, '0x' + l.topics[1].slice(26), v, parseInt(l.blockNumber, 16), input);
+            }
+          }
+        } else {
+          const nums = []; for (let n = from; n <= to; n++) nums.push(n);
+          const blocks = await Promise.all(nums.map(n => rpc('eth_getBlockByNumber', ['0x' + n.toString(16), true])));
+          for (const b of blocks) for (const tx of (b && b.transactions) || []) {
+            if (tx.to && tx.to.toLowerCase() === invoice.merchant && tx.from.toLowerCase() !== invoice.merchant) {
+              const v = BigInt(tx.value);
+              if (v > 0n && v >= invoice.units) await onPayment(tx.hash, tx.from, v, parseInt(tx.blockNumber, 16), tx.input);
+            }
+          }
+        }
+        lastBlock = to;
+      }
+      if (timer) { $('watch').textContent = `Waiting for payment · block ${latest}`; if ($('msg').classList.contains('show') && !$('msg').classList.contains('good')) msg(''); }
+    } catch (e) { $('watch').textContent = 'Cannot reach network, retrying…'; msg(e.message); }
+    busy = false;
+  }
+
+  async function onPayment(hash, from, value, block, input) {
+    if (records.some(r => r.hash === hash)) return;
+    const note = await readMessage(input, $('pass').value);
+    const rec = { hash, from: from.toLowerCase(), amount: fromUnits(value, invoice.decimals), symbol: invoice.symbol,
+      block, time: Date.now(), note };
+    records.unshift(rec); save(); render();
+    $('watch').textContent = 'Payment received';
+    const c = $('confirm');
+    c.textContent = `✓ Payment received: ${rec.amount} ${rec.symbol}` + (note ? `. Message: ${note}` : '');
+    c.classList.add('show');
+  }
+
+  // ---------- list ----------
+  function render() {
+    const el = $('list');
+    if (!records.length) { el.innerHTML = '<div class="empty">No payments recorded yet.</div>'; return; }
+    el.innerHTML = records.map(r => `
+      <div class="tx">
+        <div class="top"><span>${esc(r.amount)} ${esc(r.symbol)}</span><span class="badge">Received</span></div>
+        <div class="meta">From ${esc(r.from)}</div>
+        ${r.note ? `<div class="meta"><b>Message:</b> ${esc(r.note)}</div>` : ''}
+        <div class="meta">${new Date(r.time).toLocaleString()} · block ${r.block} ·
+          <a href="${CHAIN.explorer}/tx/${esc(r.hash)}" target="_blank" rel="noopener">View transaction</a></div>
+      </div>`).join('');
+  }
+  $('clear').addEventListener('click', () => { if (confirm('Delete all recorded payments from this browser?')) { records = []; save(); render(); } });
+  $('csv').addEventListener('click', () => {
+    if (!records.length) return;
+    const rows = [['time', 'from', 'amount', 'symbol', 'block', 'tx_hash', 'message']]
+      .concat(records.map(r => [new Date(r.time).toISOString(), r.from, r.amount, r.symbol, r.block, r.hash, JSON.stringify(r.note || '')]));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' }));
+    a.download = 'payments.csv'; a.click();
+  });
+
+  // ---------- decrypt tool ----------
+  $('decode').addEventListener('click', async () => {
+    const out = $('decoded'); out.classList.add('show');
+    const h = $('hash').value.trim();
+    if (!/^0x[a-fA-F0-9]{64}$/.test(h)) { out.textContent = 'Enter a valid transaction hash.'; return; }
+    out.textContent = 'Reading transaction…';
+    try {
+      const tx = await rpc('eth_getTransactionByHash', [h]);
+      if (!tx) { out.textContent = 'Transaction not found on Base Sepolia.'; return; }
+      const text = await readMessage(tx.input, $('dpass').value);
+      if (!text) { out.textContent = 'No readable text message in this transaction.'; return; }
+      out.innerHTML = `<b>Message:</b> ${esc(text)}<div class="meta" style="margin-top:6px">From ${esc(tx.from)} to ${esc(tx.to || '')}</div>`;
+    } catch (e) { out.textContent = 'Could not read the transaction: ' + e.message; }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
